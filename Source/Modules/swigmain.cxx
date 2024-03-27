@@ -34,6 +34,7 @@ extern "C" {
   Language *swig_javascript(void);
   Language *swig_lua(void);
   Language *swig_mzscheme(void);
+  Language *swig_msgpackrpc(void);
   Language *swig_ocaml(void);
   Language *swig_octave(void);
   Language *swig_perl5(void);
@@ -63,6 +64,7 @@ static TargetLanguageModule modules[] = {
   {"-javascript", swig_javascript, "Javascript", Supported},
   {"-lua", swig_lua, "Lua", Supported},
   {"-modula3", NULL, "Modula 3", Disabled},
+  {"-msgpackrpc", swig_msgpackrpc, "MessagePack-RPC", Experimental},
   {"-mzscheme", swig_mzscheme, "MzScheme/Racket", Experimental},
   {"-ocaml", swig_ocaml, "OCaml", Experimental},
   {"-octave", swig_octave, "Octave", Supported},
