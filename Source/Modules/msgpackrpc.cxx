@@ -1,3 +1,4 @@
+#include "cparse.h"
 #include "swigmod.h"
 
 #include <iostream>
@@ -26,20 +27,11 @@ public:
 
         SWIG_library_directory("msgpackrpc");
         SWIG_config_file("msgpackrpc.swg");
+        directorLanguage();
     }
 
     int top(Node* n) override {
         module = Getattr(n, "name");
-
-        f_runtime = NewString("");
-        f_init = NewString("");
-        f_header = NewString("");
-        f_wrappers = NewString("");
-        Swig_register_filebyname("begin", f_begin);
-        Swig_register_filebyname("header", f_header);
-        Swig_register_filebyname("wrapper", f_wrappers);
-        Swig_register_filebyname("runtime", f_runtime);
-        Swig_register_filebyname("init", f_init);
 
         auto outfile = Getattr(n, "outfile");
         auto f_begin = NewFile(outfile, "w", SWIG_output_files());
@@ -49,34 +41,53 @@ public:
         }
         Swig_banner(f_begin);
 
-        if (is_client) {
-            Printf(f_begin, "#include <msgpackrpc-client.h>\n");
-            Printf(f_begin, "#include <string_view>\n\n");
-            Printf(f_begin, "class %s_rpcclient {\n", module);
-            Printf(f_begin, "public:\n");
-            Printf(f_begin, "  explicit %s_rpcclient(std::string_view unixDomainSocketName) noexcept\n"
-                            "      : m_client(unixDomainSocketName) {\n", module);
+        if (Swig_directors_enabled()) {
+            Printf(f_begin, "#define SWIG_DIRECTORS_ENABLED 1\n");
         }
         else {
-            Printf(f_begin, "#include <msgpackrpc-server.h>\n"
+            Printf(f_begin, "// #define SWIG_DIRECTORS_ENABLED 1\n");
+        }
+        if (is_client) {
+            f_wrappers = NewStringf(
+                            "#include <msgpackrpc-client.h>\n"
+                            "#include <string_view>\n\n"
+                            "class %s_rpcclient {\n"
+                            "public:\n"
+                            "  explicit %s_rpcclient(std::string_view unixDomainSocketName) noexcept\n"
+                            "      : m_client(unixDomainSocketName)\n"
+                            "  { }\n", module, module);
+        }
+        else {
+            f_wrappers = NewString(
+                            "#include <msgpackrpc-server.h>\n"
                             "void bind_endpoints(msgpackrpc::server& svr) noexcept {\n");
             // For each non-callback call srv.bind("function_name", [&svr](args...) { return module::function_name(srv, args...); });
         }
+
+        f_runtime = NewString("// --- runtime --- ");
+        f_init = NewString("// --- init --- ");
+        f_header = NewString("// --- header --- ");
+        Swig_register_filebyname("begin", f_begin);
+        Swig_register_filebyname("header", f_header);
+        Swig_register_filebyname("wrapper", f_wrappers);
+        Swig_register_filebyname("runtime", f_runtime);
+        Swig_register_filebyname("init", f_init);
+
         // That probably has to happen inside a typemap?
         Language::top(n);
         /* Dump(f_runtime, f_begin); */
-        Dump(f_header, f_begin);
-        Dump(f_wrappers, f_begin);
+        /* Dump(f_header, f_headerf); */
         /* Wrapper_pretty_print(f_init, f_begin); */
 
         if (is_client) {
-            Printf(f_begin, "private:\n"
+            Printf(f_wrappers, "private:\n"
                             "  msgpackrpc::client m_client;\n"
                             "};\n");
         }
         else {
-            Printf(f_begin, "} // bind_endpoints \n\n");
+            Printf(f_wrappers, "} // bind_endpoints \n\n");
         }
+        Dump(f_wrappers, f_begin);
 
         Delete(f_runtime);
         Delete(f_header);
@@ -101,11 +112,17 @@ public:
       return out;
     }
 
+    static bool isCallback(Node * n) {
+        return GetFlag(n, "feature:callback");
+    }
+
     int functionWrapper(Node *n) override {
+        Printf(f_wrappers, "/* isCallback=%d */\n", isCallback(n));
+        /* Language::functionWrapper(n); */
         if (is_client) {
-        return client_functionWrapper(n);
+            return client_functionWrapper(n);
         } else {
-        return server_functionWrapper(n);
+            return server_functionWrapper(n);
         }
     }
 
@@ -118,10 +135,18 @@ public:
         String   *func   = SwigType_str(type, NewStringf("%s(%s)", name, parmstr));
         String   *action = Getattr(n, "wrap:action");
 
-        Printf(f_wrappers, "  svr.bind(\"%s\", [&svr](%s) {\n", name, parmstr);
-        Printf(f_wrappers, "    return %s::%s(svr, %s);\n", module, name, argstr);
-        Printf(f_wrappers, "  });\n");
+        if (isCallback(n)) {
+            Printf(f_callbacks, "  %s InvokeCallback_%s(%s) {\n"
+                                "    return m_cb.call(\"%s\", %s)->as<%s>();\n"
+                                "  }\n", type, name, parmstr, name, argstr, type);
+        }
+        else {
+            Printf(f_wrappers, "  svr.bind(\"%s\", [&svr](%s) {\n", name, parmstr);
+            Printf(f_wrappers, "    return %s::%s(svr, %s);\n", module, name, argstr);
+            Printf(f_wrappers, "  });\n");
+        }
 
+        
         return SWIG_OK;
     }
 
