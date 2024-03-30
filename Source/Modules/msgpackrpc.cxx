@@ -48,12 +48,6 @@ public:
         }
         Swig_banner(f_begin);
 
-        if (Swig_directors_enabled()) {
-            Printf(f_begin, "#define SWIG_DIRECTORS_ENABLED 1\n");
-        }
-        else {
-            Printf(f_begin, "// #define SWIG_DIRECTORS_ENABLED 1\n");
-        }
         if (is_client) {
             f_wrappers = NewStringf(
                             "#include \"msgpackrpc-client.h\"\n"
@@ -168,7 +162,8 @@ public:
 
     int functionWrapper(Node *n) override {
         // Printf(f_wrappers, "/* isCallback=%d */\n", isCallback(n));
-        Language::functionWrapper(n);
+        /* Language::functionWrapper(n); */
+
         if (is_client) {
             return client_functionWrapper(n);
         } else {
@@ -210,11 +205,39 @@ public:
         ParmList *parms  = Getattr(n, "parms");
         String   *parmstr= ParmList_str(parms);
         String   *argstr = ArgList_str(parms);
+        String *c_return_type = NewString("");
+        String *rpc_return_type = NewString("");
         /* String   *func   = SwigType_str(type, NewStringf("%s(%s)", name, parmstr)); */
         /* String   *action = Getattr(n, "wrap:action"); */
 
         
+        Wrapper *f = NewWrapper();
+        Swig_typemap_attach_parms("ctype", parms, f);
+        /* Swig_typemap_attach_parms("imtype", parms, f); */
 
+        if (auto tm = Swig_typemap_lookup("ctype", n, "", 0); tm) {
+          String *ctypeout = Getattr(n, "tmap:ctype:out");	// the type in the ctype typemap's out attribute overrides the type in the typemap
+          if (ctypeout) tm = ctypeout;
+          Printf(c_return_type, "%s", tm);
+        } else {
+          Swig_warning(WARN_CSHARP_TYPEMAP_CTYPE_UNDEF, input_file, line_number, "No ctype typemap defined for %s\n", SwigType_str(type, 0));
+        }
+
+        if (auto tm = Swig_typemap_lookup("in", n, "", 0); tm) {
+          String *tmin = Getattr(n, "tmap:in");
+          if (tmin) tm = tmin;
+          Printf(rpc_return_type, "%s", tm);
+        } else {
+          Swig_warning(WARN_TYPEMAP_IN_UNDEF, input_file, line_number, "No in typemap defined for %s\n", SwigType_str(type, 0));
+        }
+
+        if (auto tm = Swig_typemap_lookup("out", n, "", 0); tm) {
+          String *tmout = Getattr(n, "tmap:out");
+          if (tmout) tm = tmout;
+          // TODO: use the out typemap to convert the return value
+        } else {
+          Swig_warning(WARN_TYPEMAP_OUT_UNDEF, input_file, line_number, "No out typemap defined for %s\n", SwigType_str(type, 0));
+        }
         char const* sep = "";
         if (Len(argstr) > 0) {
             sep = ", ";
@@ -224,15 +247,16 @@ public:
         //Printf(clientWrapper, "  %s %s(%s) const;\n", type, name, parmstr);
 
         // Implementation
-        Printf(clientWrapper, "  %s %s(%s) const {\n", type, name, parmstr);
+        Printf(clientWrapper, "  %s %s(%s) const {\n", c_return_type, name, parmstr);
         if (Strcmp(type, "void") == 0) {
             Printf(clientWrapper, "    m_client.call(\"%s\"%s%s);\n", name, sep, argstr);
         } else {
-            Printf(clientWrapper, "    return m_client.call(\"%s\"%s%s)->as<%s>();\n", name, sep, argstr, type);
+            Printf(clientWrapper, "    return m_client.call(\"%s\"%s%s)->as<%s>();\n", name, sep, argstr, c_return_type);
         }
         Printf(clientWrapper, "  }\n");
 
 
+        Delete(c_return_type);
         return SWIG_OK;
     }
 
